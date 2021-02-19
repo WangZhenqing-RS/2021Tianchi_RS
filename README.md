@@ -33,3 +33,10 @@
 ### 2.3. 预测
 #### 2.3.1. TTA测试增强
 测试时对原图像和百分比截断增强图像的预测结果进行平均，得到最终结果。
+
+#3. 参考
+[参考1](https://tianchi.aliyun.com/notebook-ai/detail?spm=5176.12586969.1002.3.6cc26423Zxyf0s&postId=169396)
+
+[参考2](https://github.com/DLLXW/data-science-competition/tree/main/%E5%A4%A9%E6%B1%A0)
+
+[参考3](https://github.com/JasmineRain/NAIC_AI-RS/tree/ec70861e2a7f3ba18b3cc8bad592e746145088c9)
