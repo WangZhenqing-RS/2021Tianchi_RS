@@ -16,7 +16,7 @@ DEVICE = 'cuda:0' if torch.cuda.is_available() else 'cpu'
 
 #  读取图像像素矩阵
 #  fileName 图像路径
-def imgread(fileName, addNDVI):
+def imgread(fileName, addNDVI=False):
     dataset = gdal.Open(fileName)
     width = dataset.RasterXSize
     height = dataset.RasterYSize
@@ -28,7 +28,9 @@ def imgread(fileName, addNDVI):
             nir, r = data[3], data[0]
             ndvi = (nir - r) / (nir + r + 0.00001) * 1.0
             # 和其他波段保持统一,归到0-255,后面的totensor会/255统一归一化
-            ndvi = (ndvi - (-1)) / (1 - (-1)) * 255
+            # 统计了所有训练集ndvi的值，最小值为0，最大值很大但是数目很少，所以我们取了98%处的25
+            ndvi = (ndvi - 0) / (25 - 0) * 255
+            ndvi = np.clip(ndvi, 0, 255)
             data_add_ndvi = np.zeros((5, 256, 256), np.uint8)
             data_add_ndvi[0:4] = data
             data_add_ndvi[4] = np.uint8(ndvi)
@@ -49,7 +51,11 @@ def truncated_linear_stretch(image, truncated_value, max_out = 255, min_out = 0)
     
     image_stretch = []
     for i in range(image.shape[2]):
-        gray = gray_process(image[:,:,i])
+        # 只拉伸RGB
+        if(i<3):
+            gray = gray_process(image[:,:,i])
+        else:
+            gray = image[:,:,i]
         image_stretch.append(gray)
     image_stretch = np.array(image_stretch)
     image_stretch = image_stretch.swapaxes(1, 0).swapaxes(1, 2)
@@ -58,21 +64,26 @@ def truncated_linear_stretch(image, truncated_value, max_out = 255, min_out = 0)
 #  随机数据增强
 #  image 图像
 #  label 标签
-def DataAugmentation(image, label):
-    hor = random.choice(['yes', 'no'])
-    if(hor == 'yes'):
-        #  图像水平翻转
-        image = np.flip(image, axis = 1)
-        label = np.flip(label, axis = 1)
-    ver = random.choice(['yes', 'no'])
-    if(ver == 'yes'):
-        #  图像垂直翻转
-        image = np.flip(image, axis = 0)
-        label = np.flip(label, axis = 0)
-    stretch = random.choice(['yes', 'no'])
-    if(stretch == 'yes'):
+def DataAugmentation(image, label, mode):
+    if(mode == "train"):
+        hor = random.choice([True, False])
+        if(hor):
+            #  图像水平翻转
+            image = np.flip(image, axis = 1)
+            label = np.flip(label, axis = 1)
+        ver = random.choice([True, False])
+        if(ver):
+            #  图像垂直翻转
+            image = np.flip(image, axis = 0)
+            label = np.flip(label, axis = 0)
+        stretch = random.choice([True, False])
+        if(stretch):
+            image = truncated_linear_stretch(image, 0.5)
+    if(mode == "val"):
+        stretch = random.choice([0.8, 1, 2])
+    # if(stretch == 'yes'):
         # 0.5%线性拉伸
-        image = truncated_linear_stretch(image, 0.5)
+        image = truncated_linear_stretch(image, stretch)
     return image, label
 
 #  验证集不需要梯度计算,加速和节省gpu空间
@@ -121,19 +132,22 @@ class OurDataset(D.Dataset):
         image = imgread(self.image_paths[index], self.addNDVI)
         if self.mode == "train":
             label = imgread(self.label_paths[index], self.addNDVI) - 1
-            image, label = DataAugmentation(image, label)
+            image, label = DataAugmentation(image, label, self.mode)
             #  传入一个内存连续的array对象,pytorch要求传入的numpy的array对象必须是内存连续
             image_array = np.ascontiguousarray(image)
             return self.as_tensor(image_array), label.astype(np.int64)
         elif self.mode == "val":
             label = imgread(self.label_paths[index], self.addNDVI) - 1
             # 常规来讲,验证集不需要数据增强,但是这次数据测试集和训练集不同域,为了模拟不同域,验证集也进行数据增强
-            image, label = DataAugmentation(image, label)
+            image, label = DataAugmentation(image, label, self.mode)
             image_array = np.ascontiguousarray(image)
             return self.as_tensor(image_array), label.astype(np.int64)
         elif self.mode == "test":   
             image_stretch = truncated_linear_stretch(image, 0.5)
-            return self.as_tensor(image), self.as_tensor(image_stretch), self.image_paths[index] 
+            image_ndvi = imgread(self.image_paths[index], True)
+            nir, r = image_ndvi[:,:,3], image_ndvi[:,:,0]
+            ndvi = (nir - r) / (nir + r + 0.00001) * 1.0
+            return self.as_tensor(image), self.as_tensor(image_stretch), self.image_paths[index], ndvi
     # 数据集数量
     def __len__(self):
         return self.len
@@ -145,7 +159,7 @@ def get_dataloader(image_paths, label_paths, mode, addNDVI, batch_size,
                               num_workers=num_workers, pin_memory=True)
     return dataloader
 
-def split_train_val(image_paths, label_paths, val_index=0):
+def split_train_val_old(image_paths, label_paths, val_index=0, upsample = False):
     # 分隔训练集和验证集
     train_image_paths, train_label_paths, val_image_paths, val_label_paths = [], [], [], []
     for i in range(len(image_paths)):
@@ -156,13 +170,64 @@ def split_train_val(image_paths, label_paths, val_index=0):
         else:
             train_image_paths.append(image_paths[i])
             train_label_paths.append(label_paths[i])
+    print("Number of train images: ", len(train_image_paths))
+    print("Number of val images: ", len(val_image_paths))
+    # 训练集上采样
+    if(upsample):
+        train_label_paths_upsample = train_label_paths.copy()
+        train_image_paths_upsample = train_image_paths.copy()
+        for i, train_label_path in enumerate(train_label_paths):
+            label = imgread(train_label_path)
+            label = np.unique(label)
+            #print(i,len(train_label_paths),label)
+            upsample_num = 2
+            # 若包含少类，上采样3份,38和10因为得分太低，采取放弃策略；4因为几乎每张影像都有，采取放弃策略
+            if ((5 in label) or
+                (6 in label) or
+                (7 in label)):
+                for up in range(upsample_num):
+                    train_label_paths_upsample.append(train_label_path)
+                    train_image_paths_upsample.append(train_image_paths[i])
+        train_label_paths = train_label_paths_upsample
+        train_image_paths = train_image_paths_upsample
+        print("Number of train images after upsample: ", len(train_image_paths))
+        print("Number of val images after upsample: ", len(val_image_paths))  
     return train_image_paths, train_label_paths, val_image_paths, val_label_paths
 
+def split_train_val(image_paths, label_paths, val_index=0, upsample = True):
+    # 分隔训练集和验证集
+    train_image_paths, train_label_paths = image_paths, label_paths
+    val_image_paths, val_label_paths = image_paths, label_paths
+
+    print("Number of train images: ", len(train_image_paths))
+    print("Number of val images: ", len(val_image_paths))
+    # 训练集上采样
+    if(upsample):
+        train_label_paths_upsample = train_label_paths.copy()
+        train_image_paths_upsample = train_image_paths.copy()
+        for i, train_label_path in enumerate(train_label_paths):
+            label = imgread(train_label_path)
+            label = np.unique(label)
+            #print(i,len(train_label_paths),label)
+            upsample_num = 2
+            # 若包含少类，上采样2份,38和10因为得分太低，采取放弃策略；4因为几乎每张影像都有，采取放弃策略
+            if ((5 in label) or
+                (6 in label) or
+                (7 in label)):
+                for up in range(upsample_num):
+                    train_label_paths_upsample.append(train_label_path)
+                    train_image_paths_upsample.append(train_image_paths[i])
+        train_label_paths = train_label_paths_upsample
+        train_image_paths = train_image_paths_upsample
+        print("Number of train images after upsample: ", len(train_image_paths))
+        print("Number of val images after upsample: ", len(val_image_paths))  
+    return train_image_paths, train_label_paths, val_image_paths, val_label_paths
 # import glob
 # dataset = OurDataset(
 #     glob.glob(r'E:\WangZhenQing\TianChi\tcdata\suichang_round1_train_210120\*.tif'),
 #     glob.glob(r'E:\WangZhenQing\TianChi\tcdata\suichang_round1_train_210120\*.png'),
-#     False
+#     "train",
+#     True
 # )
 # image, label = dataset[1]
 # print(image.shape, label.shape)
