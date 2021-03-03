@@ -1,7 +1,8 @@
 # [2021全国数字生态创新大赛-智能算法](https://tianchi.aliyun.com/competition/entrance/531860/introduction)-不落星光组
+
 | 时间 | 得分 | 排名 |
-| :-----| :----- | 
-| 2021/3/3 | 0.3994 | 43/3927 
+| :-----| :----- | :----- |
+| 2021/3/3 | 0.3994 | 43/3927 |
 
 
 ## 1. 赛题描述
@@ -53,6 +54,7 @@
 我们训练了不同backbone的unet++，对预测结果取平均，得到最终结果。
 
 #3. 参考
+
 [阿水233](https://tianchi.aliyun.com/notebook-ai/detail?spm=5176.12586969.1002.3.6cc26423Zxyf0s&postId=169396)
 
 [DLLXW](https://github.com/DLLXW/data-science-competition/tree/main/%E5%A4%A9%E6%B1%A0)
