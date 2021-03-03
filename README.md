@@ -53,7 +53,7 @@
 #### 2.3.2. 模型融合
 我们训练了不同backbone的unet++，对预测结果取平均，得到最终结果。
 
-#3. 参考
+## 3. 参考
 
 [阿水233](https://tianchi.aliyun.com/notebook-ai/detail?spm=5176.12586969.1002.3.6cc26423Zxyf0s&postId=169396)
 
